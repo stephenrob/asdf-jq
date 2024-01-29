@@ -19,9 +19,9 @@ error_exit() {
 }
 
 get_platform() {
-  local testStr="$(uname | tr '[:upper:]' '[:lower:]')"
-  if [ "$testStr" == "darwin" ]; then
-    echo "osx"
+  local plat="$(uname | tr '[:upper:]' '[:lower:]')"
+  if [ "$plat" == "darwin" ]; then
+    echo "macos"
   else
     echo "linux"
   fi
@@ -29,17 +29,14 @@ get_platform() {
 }
 get_arch(){
   declare arch="$(uname -m)"
-  if [ "$arch" == 'x86_64' ]; then
-    echo '64'
-  elif [ "$arch" == 'i386' ]; then
-    echo '32'
-  elif [ "$arch" == 'i686' ]; then
-    echo '32'
-  elif [ "$arch" == 'arm64' ]; then
-    echo 'arm64'
-  else
-    error_exit 'Sadly, there are no official releases for your architecture'
-  fi
+  case "$arch" in
+    x86_64 | amd64) echo "amd64" ;;
+    x86 | i686 | i386 | 386) echo "i386" ;;
+    aarch64 | arm64) echo "arm64" ;;
+    armv7l) echo "armhf" ;;
+    armv6l) echo "armel" ;;
+    *) error_exit "Unsupported architecture $arch" ;;
+  esac
   return
 }
 
@@ -88,22 +85,23 @@ filter_assets() {
 
   declare platform="$(get_platform)";
   declare arch="$(get_arch)"
+  declare -a filters=("${platform}-${arch}")
   declare -a filteredArr=()
 
-  for i in "${inArr[@]}"; do
-    if [ "$arch" == "32" ]; then
-      declare filteredUrl="$(echo "$i" | sed -n -E "/.*$platform.*(86|32)/p" | sed -n -E '/.*86_64.*/!p')"
-      declare canPass="$(echo "$filteredUrl" | sed -n -E 's/.*[[:alpha:]].*/true/p')"
-      if [ "$canPass" == "true" ]; then
-        filteredArr+=("$filteredUrl")
+  # Handle older platform-arch naming scheme
+  case "${platform}-${arch}" in
+    linux-amd64) filters+=(linux64 linux-x86_64) ;;
+    linux-i386) filters+=(linux32 linux-x86) ;;
+    macos-amd64) filters+=(osx-amd64 osx-x86_64) ;;
+    macos-i386) filters+=(osx-x86) ;;
+  esac
+
+  for input in "${inArr[@]}"; do
+    for filter in "${filters[@]}"; do
+      if [[ "$input" == *"$filter"* ]]; then
+        filteredArr+=("$input")
       fi
-    else
-      declare filteredUrl="$(echo "$i" | sed -n -E "/$platform.*(64)/p")"
-      declare canPass="$(echo "$filteredUrl" | sed -n -E 's/.*[[:alpha:]].*/true/p')"
-      if [ "$canPass" == "true" ]; then
-        filteredArr+=("$filteredUrl")
-      fi
-    fi
+    done
   done
   echo "${filteredArr[@]}"
 }
@@ -113,7 +111,7 @@ find_file_url() {
   declare -r arch="$(get_arch)"
   declare -r platform="$(get_platform)"
   declare -a assets=($(find_all_asset_names "$install_version"))
-  declare -a usableAssets=( "$(filter_assets "${assets[@]}")" )
+  declare -a usableAssets=($(filter_assets "${assets[@]}"))
 
   if [ "${#usableAssets[@]}" == 0 ]; then
     error_exit "No releases in version $install_version matching $platform $arch-bits"
@@ -133,7 +131,7 @@ download() {
     if [ -z "$download_url" ]; then
       error_exit "Malformed URL"
     fi
-    mkdir "$download_path/bin"
+    mkdir -p "$download_path/bin"
     curl_wrapper -fsS -L -o "${download_path}/bin/jq" "$download_url"
   else
     rm -rf "$download_path"
